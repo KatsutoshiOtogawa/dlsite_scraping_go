@@ -1,0 +1,2 @@
+.devcontainer/logs/*
+!/.devcontainer/logs/.gitignore

@@ -1,4 +1,4 @@
-module disite
+module github.com/KatsutoshiOtogawa/dlsite_scraping_go
 
 go 1.20
 

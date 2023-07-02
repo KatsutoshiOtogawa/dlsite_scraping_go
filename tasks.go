@@ -9,12 +9,37 @@ import (
 	"time"
 
 	// "cloud.google.com/go/logging"
-	"cloud.google.com/go/logging"
+
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"google.golang.org/api/option"
 	// "google.golang.org/api/option"
 )
+
+// OpenLogのCallBack関数です。このフォーマット通りに動きます。
+// example: 2, 3のやり方で実装することを推奨。
+//  1. vpsの場合、ローカルファイルにログを書き込む。
+//     fileName := "app.log"
+//     file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+//     if err != nil {
+//     return nil, fmt.Errorf("ログファイルを開く際にエラーが発生しました: %v", err)
+//  2. devcontainer実行時や、docker logsにログを吐く場合。
+//
+// 特にファイルをOpenしなくて良い。ログのフォーマットも指定しなくて良い。管理が減るのでこっちの方が良い。
+//
+//	 何もしない関数を渡す。
+//		func () (*os.File, error) {
+//				return nil, nil
+//		}
+//
+// 3. gcp, awsなどのlogging
+type OpenLog func() (*os.File, error)
+
+// CloseLogのCallBack関数です。
+type CloseLog func(file *os.File) error
+
+// WaitVisible, WaitEnableのCallback関数です。
+// HeadlessならWaitEnableを選択してください。
+type WaitLogic func() error
 
 // Actionの順番に処理されるが、中で呼ぶブラウザの処理が同期的な処理とは限らないので注意。
 
@@ -23,7 +48,7 @@ type ScrapingTaskManager struct {
 	Width                int64
 	Height               int64
 	ScreenShotLogPath    string
-	LogPrefix            string
+	ScreenShotLogPrefix  string
 	SiteTopUrl           string
 	LogInUrl             string
 	LogOutUrl            string
@@ -36,6 +61,8 @@ type ScrapingTaskManager struct {
 	AgePermissionSel     string        // 年齢認証が求められたときにYesを押すボタンのタグ
 	AgePermissionNextSel string        // 年齢認証が求められたときにYesを押した後に移動するページにあるSelector
 	DefaultTimeSpan      time.Duration // 実行時に待つ時間のデフォルト値
+	OpenLog              OpenLog
+	CloseLog             CloseLog
 }
 
 // logが書けることの確認。
@@ -47,64 +74,65 @@ func IsEnableLog() (bool, error) {
 // ログをOpenする。
 // gcpのcloud loggingを使う場合は
 // defer CloseLog()でちゃんとファイルが閉じることを保証すること。
-func OpenLog() (*os.File, error) {
+// この関数を渡せるように
+// func OpenLog() (*os.File, error) {
 
-	isLocal := false // ローカル環境かどうかの判定方法に合わせて適切な値を設定する
+// 	isLocal := false // ローカル環境かどうかの判定方法に合わせて適切な値を設定する
 
-	var file *os.File
+// 	var file *os.File
 
-	if isLocal {
-		// ローカル環境の場合、ファイルにログを書き込む
-		fileName := "app.log"
-		file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return nil, fmt.Errorf("ログファイルを開く際にエラーが発生しました: %v", err)
-		}
+// 	if isLocal {
+// 		// ローカル環境の場合、ファイルにログを書き込む
+// 		fileName := "app.log"
+// 		file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+// 		if err != nil {
+// 			return nil, fmt.Errorf("ログファイルを開く際にエラーが発生しました: %v", err)
+// 		}
 
-		log.SetOutput(file)
-	} else {
-		//
-		// GCP上の場合、Cloud Loggingにログを送信する
-		// credential使うのはあまり良くないので、iam+serviceaccountで設定する。
-		projectID := "your-project-id"
-		credentialsFile := "/path/to/credentials.json"
+// 		log.SetOutput(file)
+// 	} else {
+// 		//
+// 		// GCP上の場合、Cloud Loggingにログを送信する
+// 		// credential使うのはあまり良くないので、iam+serviceaccountで設定する。
+// 		projectID := "your-project-id"
+// 		credentialsFile := "/path/to/credentials.json"
 
-		ctx := context.Background()
-		client, err := logging.NewClient(ctx, projectID, option.WithCredentialsFile(credentialsFile))
-		if err != nil {
-			return nil, fmt.Errorf("Cloud Loggingクライアントの作成に失敗しました: %v", err)
-		}
+// 		ctx := context.Background()
+// 		client, err := logging.NewClient(ctx, projectID, option.WithCredentialsFile(credentialsFile))
+// 		if err != nil {
+// 			return nil, fmt.Errorf("Cloud Loggingクライアントの作成に失敗しました: %v", err)
+// 		}
 
-		logger := client.Logger("my-log")
-		log.SetOutput(logger.Writer(logging.Info))
-	}
+// 		logger := client.Logger("my-log")
+// 		log.SetOutput(logger.Writer(logging.Info))
+// 	}
 
-	return file, nil
+// 	return file, nil
 
-}
+// }
 
-func CloseLog(file *os.File) error {
+// func CloseLog(file *os.File) error {
 
-	isLocal := false // ローカル環境かどうかの判定方法に合わせて適切な値を設定する
+// 	isLocal := false // ローカル環境かどうかの判定方法に合わせて適切な値を設定する
 
-	if isLocal {
-		err := file.Close()
-		if err != nil {
-			return fmt.Errorf("Cloud Loggingクライアントの作成に失敗しました: %v", err)
-		}
-	}
+// 	if isLocal {
+// 		err := file.Close()
+// 		if err != nil {
+// 			return fmt.Errorf("Cloud Loggingクライアントの作成に失敗しました: %v", err)
+// 		}
+// 	}
 
-	// gcpなどでは常にnil
+// 	// gcpなどでは常にnil
 
-	return nil
-}
+// 	return nil
+// }
 
 // 年齢認証通過後か判定
 func (s ScrapingTaskManager) IsAgeVerificationTasks(targetCookieName string, targetCookieValue string, valid *bool) chromedp.Tasks {
 
-	file, _ := OpenLog()
+	file, _ := s.OpenLog()
 
-	defer CloseLog(file)
+	defer s.CloseLog(file)
 
 	// 判定が終わるまでunkownなのでnilを入れる
 	valid = nil
@@ -133,19 +161,19 @@ func (s ScrapingTaskManager) IsAgeVerificationTasks(targetCookieName string, tar
 }
 
 // Scraping TaskManagerのログを取る。
-func (s ScrapingTaskManager) LogTasks() chromedp.Tasks {
+// func (s ScrapingTaskManager) LogTasks() chromedp.Tasks {
 
-	return chromedp.Tasks{
-		s.TakeScreenShotLog(`<Documents>`, "", "png"),
-	}
-}
+// 	return chromedp.Tasks{
+// 		s.TakeScreenShotLog(`<Documents>`, "", "png"),
+// 	}
+// }
 
 // セッションが有効かどうかの確認を行う。
 func (s ScrapingTaskManager) IsSessionVerificationTasks(valid *bool) chromedp.Tasks {
 
-	file, _ := OpenLog()
+	file, _ := s.OpenLog()
 
-	defer CloseLog(file)
+	defer s.CloseLog(file)
 	// 判定が終わるまでunkownなのでnilを入れる
 	valid = nil
 	return chromedp.Tasks{
@@ -174,9 +202,9 @@ func (s ScrapingTaskManager) IsSessionVerificationTasks(valid *bool) chromedp.Ta
 
 // ウィンドウのサイズを調整する
 func (s ScrapingTaskManager) EmulateViewportTasks(width int64, height int64) chromedp.Tasks {
-	file, _ := OpenLog()
+	file, _ := s.OpenLog()
 
-	defer CloseLog(file)
+	defer s.CloseLog(file)
 	return chromedp.Tasks{
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			// ウィンドウサイズを指定（オプション）
@@ -193,9 +221,9 @@ func (s ScrapingTaskManager) EmulateViewportTasks(width int64, height int64) chr
 
 // url全体を取得する
 func (s ScrapingTaskManager) LocationHrefTasks(href *string) chromedp.Tasks {
-	file, _ := OpenLog()
+	file, _ := s.OpenLog()
 
-	defer CloseLog(file)
+	defer s.CloseLog(file)
 	return chromedp.Tasks{
 		chromedp.ActionFunc(func(ctx context.Context) error {
 
@@ -214,9 +242,9 @@ func (s ScrapingTaskManager) LocationHrefTasks(href *string) chromedp.Tasks {
 
 // ウィンドウのサイズを取得する
 func (s ScrapingTaskManager) ViewSizeTasks(width *int64, height *int64) chromedp.Tasks {
-	file, _ := OpenLog()
+	file, _ := s.OpenLog()
 
-	defer CloseLog(file)
+	defer s.CloseLog(file)
 	return chromedp.Tasks{
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			// ウィンドウサイズを指定（オプション）
@@ -240,9 +268,9 @@ func (s ScrapingTaskManager) ViewSizeTasks(width *int64, height *int64) chromedp
 //			sel h1, div1
 //		 fileNameFormat prefixの後のファイル名。自由形式。空の文字列でも良い。
 //	  fileExtension 現時点ではpng固定。
-func (s ScrapingTaskManager) TakeScreenShotLog(sel interface{}, logFileName string, fileExtension string) chromedp.Tasks {
+func (s ScrapingTaskManager) TakeScreenShotLogTasks(sel interface{}, logFileName string, fileExtension string) chromedp.Tasks {
 	// スクリーンショットの名称指定。
-	currentTime := time.Now().Format(s.LogPrefix)
+	currentTime := time.Now().Format(s.ScreenShotLogPrefix)
 
 	fileName := filepath.Join(s.ScreenShotLogPath, fmt.Sprintf("%s%s.%s", currentTime, logFileName, fileExtension))
 	return s.TakeScreenShotTasks(sel, fileName)
@@ -255,9 +283,9 @@ func (s ScrapingTaskManager) TakeScreenShotLog(sel interface{}, logFileName stri
 //		sel h1, div1
 //	 fileName パスと拡張子まで含めた
 func (s ScrapingTaskManager) TakeScreenShotTasks(sel interface{}, fileName string) chromedp.Tasks {
-	file, _ := OpenLog()
+	file, _ := s.OpenLog()
 
-	defer CloseLog(file)
+	defer s.CloseLog(file)
 	return chromedp.Tasks{
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			var imageBuf []byte
@@ -285,15 +313,15 @@ func (s ScrapingTaskManager) TakeScreenShotTasks(sel interface{}, fileName strin
 
 // キー入力を行う。
 func (s ScrapingTaskManager) SendKeysTasks(sel interface{}, v string, t ...time.Duration) chromedp.Tasks {
+	file, _ := s.OpenLog()
+
+	defer s.CloseLog(file)
 	var waitTime time.Duration
 	if len(t) == 0 {
 		waitTime = s.DefaultTimeSpan
 	} else {
 		waitTime = t[0]
 	}
-	file, _ := OpenLog()
-
-	defer CloseLog(file)
 	return chromedp.Tasks{
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			err := chromedp.SendKeys(sel, v).Do(ctx)
@@ -367,9 +395,9 @@ func (s ScrapingTaskManager) LogoutTasks(t ...time.Duration) chromedp.Tasks {
 // 要素をクリックする
 // t 待つのに使う。指定しない場合は、デフォルトの時間が使われる。配列の最初にあるものしか使われない。
 func (s ScrapingTaskManager) ClickTasks(sel interface{}, t ...time.Duration) chromedp.Tasks {
-	file, _ := OpenLog()
+	file, _ := s.OpenLog()
 
-	defer CloseLog(file)
+	defer s.CloseLog(file)
 	var waitTime time.Duration
 	if len(t) == 0 {
 		waitTime = s.DefaultTimeSpan
@@ -392,9 +420,9 @@ func (s ScrapingTaskManager) ClickTasks(sel interface{}, t ...time.Duration) chr
 // 処理を待つのに使う
 // t 待つのに使う。指定しない場合は、デフォルトの時間が使われる。配列の最初にあるものしか使われない。
 func (s ScrapingTaskManager) WaitTasks(t ...time.Duration) chromedp.Tasks {
-	file, _ := OpenLog()
+	file, _ := s.OpenLog()
 
-	defer CloseLog(file)
+	defer s.CloseLog(file)
 	var waitTime time.Duration
 	if len(t) == 0 {
 		waitTime = s.DefaultTimeSpan
@@ -408,24 +436,68 @@ func (s ScrapingTaskManager) WaitTasks(t ...time.Duration) chromedp.Tasks {
 				log.Println("待てませんでした。", err)
 				return err
 			}
-			log.Println("%v待ちました。", waitTime)
+			log.Printf("%v待ちました。", waitTime)
 			return nil
 		}),
 	}
 }
 
-// 要素が見えるのを待つ。
+// テキストを取得するのに使う。
+// Selectorに合致するものが複数あると正しく動かないので注意。
+// 主に正しく実行されているかなどの検査に使う。
 // t 待つのに使う。指定しない場合は、デフォルトの時間が使われる。配列の最初にあるものしか使われない。
-func (s ScrapingTaskManager) WaitVisibleTasks(sel interface{}, t ...time.Duration) chromedp.Tasks {
-	file, _ := OpenLog()
+func (s ScrapingTaskManager) TextContentTasks(sel interface{}, v *string, t ...time.Duration) chromedp.Tasks {
+	file, _ := s.OpenLog()
 
-	defer CloseLog(file)
+	defer s.CloseLog(file)
 	var waitTime time.Duration
 	if len(t) == 0 {
 		waitTime = s.DefaultTimeSpan
 	} else {
 		waitTime = t[0]
 	}
+	return chromedp.Tasks{
+
+		// s.WaitVisibleTasks(sel),
+		s.WaitEnableTasks(sel),
+
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			err := chromedp.TextContent(sel, v).Do(ctx)
+
+			if err != nil {
+				log.Println("textContentを取得できませんでした。", err)
+				return err
+			}
+			log.Printf("textContentの値は%sです", *v)
+			return nil
+		}),
+		// chromedp.TextContent(sel, v),
+		s.WaitTasks(waitTime),
+		// chromedp.ActionFunc(func(ctx context.Context) error {
+		// 	err := chromedp.Sleep(waitTime).Do(ctx)
+		// 	if err != nil {
+		// 		log.Println("待てませんでした。", err)
+		// 		return err
+		// 	}
+		// 	log.Printf("%v待ちました。", waitTime)
+		// 	return nil
+		// }),
+	}
+}
+
+// 要素が見えるのを待つ。Headlessなら永遠に表示されないので、使わない。
+// t 待つのに使う。指定しない場合は、デフォルトの時間が使われる。配列の最初にあるものしか使われない。
+func (s ScrapingTaskManager) WaitVisibleTasks(sel interface{}, t ...time.Duration) chromedp.Tasks {
+	file, _ := s.OpenLog()
+
+	defer s.CloseLog(file)
+	var waitTime time.Duration
+	if len(t) == 0 {
+		waitTime = s.DefaultTimeSpan
+	} else {
+		waitTime = t[0]
+	}
+	// 何を待っているかのログを数秒置きに出す。
 	return chromedp.Tasks{
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			err := chromedp.WaitVisible(sel).Do(ctx)
@@ -439,11 +511,36 @@ func (s ScrapingTaskManager) WaitVisibleTasks(sel interface{}, t ...time.Duratio
 	}
 }
 
+// 要素が使えるようになるのを待つ。
+// t 待つのに使う。指定しない場合は、デフォルトの時間が使われる。配列の最初にあるものしか使われない。
+func (s ScrapingTaskManager) WaitEnableTasks(sel interface{}, t ...time.Duration) chromedp.Tasks {
+	file, _ := s.OpenLog()
+
+	defer s.CloseLog(file)
+	var waitTime time.Duration
+	if len(t) == 0 {
+		waitTime = s.DefaultTimeSpan
+	} else {
+		waitTime = t[0]
+	}
+	return chromedp.Tasks{
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			err := chromedp.WaitEnabled(sel).Do(ctx)
+			if err != nil {
+				log.Println("要素が使えるようになるのを待てませんでした。", err)
+				return err
+			}
+			return nil
+		}),
+		s.WaitTasks(waitTime),
+	}
+}
+
 // 年齢認証を突破する
 func (s ScrapingTaskManager) AgeVerificationTasks(t ...time.Duration) chromedp.Tasks {
-	file, _ := OpenLog()
+	file, _ := s.OpenLog()
 
-	defer CloseLog(file)
+	defer s.CloseLog(file)
 	var waitTime time.Duration
 	if len(t) == 0 {
 		waitTime = s.DefaultTimeSpan

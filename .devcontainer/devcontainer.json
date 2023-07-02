@@ -16,16 +16,9 @@
 		"ghcr.io/devcontainers/features/go": {},
 	},
 
-	"containerEnv": {
-		"CONTENTS": "maniax",
-		// adult判定に使っているセッション名
-		"ADULT_SESSION_KEY": "adultchecked",
-		// adult判定に使っている値
-		"ADULT_SESSION_VALUE": "1",
-		// session管理に使っているクッキー名
-		"SITE_SESSION_COOKIE": "session_state",
-		"SITE_TOP_URL": "https://www.dlsite.com/"
-	},
+	"runArgs": [
+        "--env-file", "${localWorkspaceFolder}/.devcontainer/.env"
+    ], 
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	"forwardPorts": [

@@ -1,44 +1,17 @@
-package tasks_test
+package tasks
 
 import (
 	"context"
 	"log"
+	"os"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/chromedp/chromedp"
 )
 
-// テストケースを定義します
-var testCases = []struct {
-	input    int
-	expected int
-}{
-	{2, 4},   // 2を入力した場合、4が期待値
-	{0, 0},   // 0を入力した場合、0が期待値
-	{-1, -2}, // -1を入力した場合、-2が期待値
-}
-
-// テスト対象の関数を定義します
-func Double(x int) int {
-	return x * 2
-}
-
-// テスト関数を定義します
-func TestDouble(t *testing.T) {
-	// 各テストケースを順に実行します
-	for _, tc := range testCases {
-		// テストケースを実行し、結果を取得します
-		result := Double(tc.input)
-
-		// 結果と期待値を比較し、一致しない場合にエラーメッセージを表示します
-		if result != tc.expected {
-			t.Errorf("Double(%d) = %d, expected %d", tc.input, result, tc.expected)
-		}
-	}
-}
-
-func TestMovePageTasks(t *testing.T) {
+func TestMoveTopPageTasks(t *testing.T) {
 
 	ctx, cancel := chromedp.NewContext(context.Background())
 
@@ -49,15 +22,87 @@ func TestMovePageTasks(t *testing.T) {
 	defer cancel()
 
 	// タイムアウトの設定
-	ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
+	// ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
+	//　これが小さすぎるとcontext deadline exceedになる。
+	ctx, cancel = context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 
-	var taskManager ScrapingTaskManager
-
-	taskManager.MoveTopPageTasks(siteUrl)
-
-	err := chromedp.Run(ctx, MoveTopPageTasks(siteUrl))
+	num, err := strconv.Atoi(os.Getenv("DEFAULT_TIME_SPAN"))
 	if err != nil {
-		log.Fatal(err)
+		t.Errorf("整数に変換できませんでした。 MoveTopPageTasks() = %v", err)
+		return
 	}
+	taskManager := ScrapingTaskManager{
+		SessionCookieName:   os.Getenv("SITE_SESSION_COOKIE"),
+		SiteTopUrl:          os.Getenv("SITE_TOP_URL"),
+		DefaultTimeSpan:     time.Duration(num) * time.Second,
+		ScreenShotLogPath:   os.Getenv("SCREENSHOT_LOG_PATH"),
+		ScreenShotLogPrefix: os.Getenv("SCREENSHOT_LOG_PREFIX"),
+
+		OpenLog: func() (*os.File, error) {
+
+			return nil, nil
+		},
+		CloseLog: func(file *os.File) error {
+			return nil
+		},
+	}
+
+	// err := chromedp.Run(ctx, taskManager.MoveTopPageTasks())
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+
+	// // 移動した後のテキストを取得する
+	// var text string
+	// err = chromedp.Run(ctx, taskManager.TextContentTasks("h1", text))
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	type args struct {
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "MoveTopPage",
+			args: args{},
+			want: "Select Language",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// if got := Sub(tt.args.i, tt.args.j); got != tt.want {
+			// 	t.Errorf("Sub() = %v, want %v", got, tt.want)
+			// }
+			// err := chromedp.Run(ctx, taskManager.MoveTopPageTasks())
+			// if err != nil {
+			// 	t.Errorof(err)
+			// 	log.Fatal(err)
+			// }
+			var text string
+			err := chromedp.Run(ctx,
+				taskManager.MoveTopPageTasks(),
+				// 移動した後のテキストを取得する
+				taskManager.TextContentTasks("#locale_setting_title", &text),
+				taskManager.TakeScreenShotLogTasks("#locale_setting_title", "", "png"),
+			)
+			// エラーが出た。
+			if err != nil {
+				log.Fatal(err)
+				t.Errorf("MoveTopPageTasks() = %v", err)
+			}
+
+			if text != tt.want {
+				t.Errorf("MoveTopPageTasks() = %s, want %s", text, tt.want)
+			}
+
+			// if got := Sub(tt.args.i, tt.args.j); got != tt.want {
+			// 	t.Errorf("Sub() = %v, want %v", got, tt.want)
+			// }
+		})
+	}
+
 }

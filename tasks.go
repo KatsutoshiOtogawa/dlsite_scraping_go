@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -44,25 +45,25 @@ type WaitLogic func() error
 // Actionの順番に処理されるが、中で呼ぶブラウザの処理が同期的な処理とは限らないので注意。
 
 type ScrapingTaskManager struct {
-	SessionCookieName    string
-	Width                int64
-	Height               int64
-	ScreenShotLogPath    string
-	ScreenShotLogPrefix  string
-	SiteTopUrl           string
-	LogInUrl             string
-	LogOutUrl            string
-	LoginPassword        string
-	LoginPasswordSel     string
-	LoginUsername        string
-	LoginUsernameSel     string
-	LoginButtonSel       string
-	AgePermissionUrl     string        // 年齢認証が求められるurl
-	AgePermissionSel     string        // 年齢認証が求められたときにYesを押すボタンのタグ
-	AgePermissionNextSel string        // 年齢認証が求められたときにYesを押した後に移動するページにあるSelector
-	DefaultTimeSpan      time.Duration // 実行時に待つ時間のデフォルト値
-	OpenLog              OpenLog
-	CloseLog             CloseLog
+	SiteSessionCookieName string
+	Width                 int64
+	Height                int64
+	ScreenShotLogPath     string
+	ScreenShotLogPrefix   string
+	SiteTopUrl            string
+	LogInUrl              string
+	LogOutUrl             string
+	LoginPassword         string
+	LoginPasswordSel      string
+	LoginUsername         string
+	LoginUsernameSel      string
+	LoginButtonSel        string
+	AgePermissionUrl      string        // 年齢認証が求められるurl
+	AgePermissionSel      string        // 年齢認証が求められたときにYesを押すボタンのタグ
+	AgePermissionNextSel  string        // 年齢認証が求められたときにYesを押した後に移動するページにあるSelector
+	DefaultTimeSpan       time.Duration // 実行時に待つ時間のデフォルト値
+	OpenLog               OpenLog
+	CloseLog              CloseLog
 }
 
 // logが書けることの確認。
@@ -160,13 +161,15 @@ func (s ScrapingTaskManager) IsAgeVerificationTasks(targetCookieName string, tar
 	}
 }
 
-// Scraping TaskManagerのログを取る。
-// func (s ScrapingTaskManager) LogTasks() chromedp.Tasks {
-
-// 	return chromedp.Tasks{
-// 		s.TakeScreenShotLog(`<Documents>`, "", "png"),
-// 	}
-// }
+// 常にエラーになることが保証されているタスク
+// エラーに入れたい文字列を代入してください。
+func (s ScrapingTaskManager) ErrorTask(v string) chromedp.Tasks {
+	return chromedp.Tasks{
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			return errors.New(v)
+		}),
+	}
+}
 
 // セッションが有効かどうかの確認を行う。
 func (s ScrapingTaskManager) IsSessionVerificationTasks(valid *bool) chromedp.Tasks {
@@ -185,7 +188,7 @@ func (s ScrapingTaskManager) IsSessionVerificationTasks(valid *bool) chromedp.Ta
 			}
 
 			for _, cookie := range cookies {
-				if cookie.Name == s.SessionCookieName {
+				if cookie.Name == s.SiteSessionCookieName {
 					*valid = true
 					break
 				}
@@ -292,7 +295,6 @@ func (s ScrapingTaskManager) TakeScreenShotTasks(sel interface{}, fileName strin
 			// スクリーンショットを取得
 			// スクリーンショットの名称指定。
 			err := chromedp.Screenshot(sel, &imageBuf, chromedp.NodeVisible, chromedp.ByQuery).Do(ctx)
-			// buf, err := chromedp.CaptureScreenshot().Do(ctx)
 			if err != nil {
 				log.Println("スクリーンショットが取得できませんでした。", err)
 				return err
@@ -300,7 +302,6 @@ func (s ScrapingTaskManager) TakeScreenShotTasks(sel interface{}, fileName strin
 
 			// スクリーンショットをファイルに保存
 			err = os.WriteFile(fileName, imageBuf, 0640)
-			// err = chromedp.WriteFile(screenshotPath, buf).Do(ctx)
 			if err != nil {
 				log.Println("スクリーンショットをファイルに保存できませんでした。", err)
 				return err
@@ -369,11 +370,26 @@ func (s ScrapingTaskManager) LoginSiteTasks(t ...time.Duration) chromedp.Tasks {
 	}
 
 	return chromedp.Tasks{
+		// ログイン状態かどうかの検証。
+		// chromedp.ActionFunc(func(ctx context.Context) error {
+		// 	var valid bool
+		// 	err := s.IsSessionVerificationTasks(&valid).Do(ctx)
+		// 	if err != nil {
+		// 		log.Println("ログイン済みかどうか確認できませんでした。", err)
+		// 		return err
+		// 	}
+
+		// 	if valid {
+		// 		return errors.New("ログイン状態で、ログインを呼び出そうとしました。")
+		// 	}
+		// 	return nil
+		// }),
 		s.MovePageTasks(s.LogInUrl),
+		s.TakeScreenShotLogTasks("html", "login", "png"),
 		s.SendKeysTasks(s.LoginUsernameSel, s.LoginUsername, waitTime),
 		s.SendKeysTasks(s.LoginPasswordSel, s.LoginPassword, waitTime),
-		// s.ClickTasks("#passwordNext", waitTime),
 		s.ClickTasks(s.LoginButtonSel, waitTime),
+		s.WaitTasks(waitTime),
 	}
 }
 
@@ -386,9 +402,25 @@ func (s ScrapingTaskManager) LogoutTasks(t ...time.Duration) chromedp.Tasks {
 	} else {
 		waitTime = t[0]
 	}
+
 	return chromedp.Tasks{
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			var valid bool
+			err := s.IsSessionVerificationTasks(&valid).Do(ctx)
+			if err != nil {
+				log.Println("ログイン済みかどうか確認できませんでした。", err)
+				return err
+			}
+
+			if !valid {
+				return errors.New("未ログイン状態で、ログアウトを呼び出そうとしました。")
+			}
+			return nil
+		}),
+		// ボタンをクリックするかどうかはサイトによる。
 		s.MovePageTasks(s.LogOutUrl),
-		s.ClickTasks("#passwordNext", waitTime),
+		// s.ClickTasks("#passwordNext", waitTime),
+		s.WaitTasks(waitTime),
 	}
 }
 
